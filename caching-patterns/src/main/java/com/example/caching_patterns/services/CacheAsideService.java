@@ -2,6 +2,7 @@ package com.example.caching_patterns.services;
 
 import com.example.caching_patterns.User;
 import com.example.caching_patterns.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -72,7 +73,7 @@ import java.util.Random;
  *  - When you need strong consistency (cache might serve stale data)
  *  - When cold-start performance is critical (first request always slow)
  *
- *  ------------------
+ *
  *  * | Aspect         | Cache-Aside Behavior         |
  *  * |----------------|------------------------------|
  *  * | Read latency   | Fast (after first miss)       |
@@ -94,6 +95,7 @@ public class CacheAsideService {
 
     private final UserRepository userRepository;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final ObjectMapper objectMapper;
 
     @Value("${cache.ttle.default:300}")
     private long defaultTtlSeconds;
@@ -102,6 +104,19 @@ public class CacheAsideService {
     private static final String LOCK_KEY_PREFIX = "lock:user";
     private static final  long LOCK_TTL_SECONDS = 5;
     private final Random random = new Random();
+
+    /**
+     * Safely convert whatever Redis returned (User or LinkedHashMap when type
+     * metadata is absent on the serializer) into a typed User instance.
+     * Using ObjectMapper.convertValue avoids ClassCastException from the raw
+     * (User) cast on a LinkedHashMap payload.
+     */
+    private User toUser(Object cached) {
+        if (cached instanceof User user) {
+            return user;
+        }
+        return objectMapper.convertValue(cached, User.class);
+    }
 
     // READ: Cache-Aside GET
 
@@ -126,7 +141,7 @@ public class CacheAsideService {
         Object cached = redisTemplate.opsForValue().get(cacheKey);
         if (cached != null) {
             log.debug("[CACHE-ASIDE] CACHE HIT for userId={}", userId);
-            return Optional.of((User) cached);
+            return Optional.of(toUser(cached));
         }
         log.debug("[CACHE-ASIDE] CACHE MISS for userId={}, querying DB", userId);
 
@@ -173,7 +188,7 @@ public class CacheAsideService {
         //try cache
         Object cached = redisTemplate.opsForValue().get(cacheKey);
         if (cached != null) {
-            return Optional.of((User) cached);
+            return Optional.of(toUser(cached));
         }
         //try to acquire lock(SETNX = atomix "set" if absent"
         Boolean acquired = redisTemplate.opsForValue()
@@ -202,15 +217,12 @@ public class CacheAsideService {
             }
             //retry
             Object retired = redisTemplate.opsForValue().get(cacheKey);
-            return retired != null ? Optional.of((User) retired) : userRepository.findById(userId);
+            return retired != null ? Optional.of(toUser(retired)) : userRepository.findById(userId);
         }
     }
 
 
     //WRITE : Invalidate on Update
-    // =========================================================
-    // WRITE: Invalidate on Update
-    // =========================================================
 
     /**
      * WRITE FLOW EXPLAINED:
