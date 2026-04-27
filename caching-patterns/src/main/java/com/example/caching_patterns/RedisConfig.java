@@ -1,12 +1,11 @@
 package com.example.caching_patterns;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /**
@@ -23,24 +22,19 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 @Configuration
 public class RedisConfig {
 
-    @Value("${spring.data.redis.host:localhost}")
-    private String redisHost;
-    @Value("${spring.data.redis.port:6379}")
-    private int redisPort;
-
     @Bean
-    public RedisTemplate<String, User> redisTemplate(RedisConnectionFactory factory, ObjectMapper objectMapper) {
-        RedisTemplate<String, User> redisTemplate = new RedisTemplate<>();
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory, ObjectMapper objectMapper) {
+        RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
         redisTemplate.setConnectionFactory(factory);
 
-        Jackson2JsonRedisSerializer<User> serializer = new Jackson2JsonRedisSerializer<>(objectMapper,User.class);
+        GenericJackson2JsonRedisSerializer valueSerializer = new GenericJackson2JsonRedisSerializer(objectMapper);
 
         StringRedisSerializer keySerializer = new StringRedisSerializer();
 
         redisTemplate.setKeySerializer(keySerializer);
-        redisTemplate.setValueSerializer(serializer);
+        redisTemplate.setValueSerializer(valueSerializer);
         redisTemplate.setHashKeySerializer(keySerializer);
-        redisTemplate.setHashValueSerializer(serializer);
+        redisTemplate.setHashValueSerializer(valueSerializer);
 
         redisTemplate.afterPropertiesSet();
         return redisTemplate;
