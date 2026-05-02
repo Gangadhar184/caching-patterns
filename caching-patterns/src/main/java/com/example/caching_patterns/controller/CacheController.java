@@ -1,13 +1,13 @@
 package com.example.caching_patterns.controller;
 
 import com.example.caching_patterns.User;
-import com.example.caching_patterns.services.CacheAsideService;
-import com.example.caching_patterns.services.WriteBackService;
-import com.example.caching_patterns.services.WriteThroughService;
+import com.example.caching_patterns.services.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @Slf4j
@@ -17,6 +17,8 @@ public class CacheController {
     private final CacheAsideService cacheAsideService;
     private final WriteThroughService writeThroughService;
     private final WriteBackService writeBackService;
+    private final TtlExpirationService ttlExpirationService;
+    private final CachePenetrationService cachePenetrationService;
 
     @GetMapping("/api/cache-aside/users/{id}")
     public ResponseEntity<User> getCacheAside(@PathVariable Long id) {
@@ -54,9 +56,9 @@ public class CacheController {
     }
 
 
-    // =========================================================
+
     // PATTERN 2: WRITE-THROUGH
-    // =========================================================
+
 
     @GetMapping("/api/write-through/users/{id}")
     public ResponseEntity<User> getWriteThrough(@PathVariable Long id) {
@@ -78,9 +80,7 @@ public class CacheController {
         return ResponseEntity.ok(writeThroughService.createOrUpdateUserAsync(user));
     }
 
-    // =========================================================
     // PATTERN 3: WRITE-BACK
-    // =========================================================
 
     @GetMapping("/api/write-back/users/{id}")
     public ResponseEntity<User> getWriteBack(@PathVariable Long id) {
@@ -109,5 +109,80 @@ public class CacheController {
         writeBackService.flushPendingWritesToDatabase();
         return ResponseEntity.ok("Flush triggered successfully");
     }
+
+
+    // STRATEGY 4: TTL EXPIRATION
+
+    @PostMapping("/api/ttl/otp/{userId}")
+    public ResponseEntity<String> createOtp(
+            @PathVariable String userId,
+            @RequestBody Map<String, String> body) {
+        String code = body.getOrDefault("code", "000000");
+        ttlExpirationService.storeOtp(userId, code);
+        return ResponseEntity.ok("OTP stored for userId=" + userId);
+    }
+
+    @PostMapping("/api/ttl/otp/{userId}/validate")
+    public ResponseEntity<String> validateOtp(
+            @PathVariable String userId,
+            @RequestBody Map<String, String> body) {
+        String inputCode = body.getOrDefault("code", "");
+        return ttlExpirationService.validateOtp(userId, inputCode)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.ok("EXPIRED_OR_NOT_FOUND"));
+    }
+
+    @PostMapping("/api/ttl/sessions/{sessionId}")
+    public ResponseEntity<String> createSession(
+            @PathVariable String sessionId,
+            @RequestBody Map<String, Object> sessionData) {
+        ttlExpirationService.createSession(sessionId, sessionData);
+        return ResponseEntity.ok("Session created: " + sessionId);
+    }
+
+    @GetMapping("/api/ttl/sessions/{sessionId}")
+    public ResponseEntity<?> getSession(@PathVariable String sessionId) {
+        return ttlExpirationService.getSession(sessionId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/api/ttl/debug/{key}")
+    public ResponseEntity<Map<String, Object>> debugTtl(@PathVariable String key) {
+        Long remainingTtl = ttlExpirationService.getRemainingTtl(key);
+        boolean exists = ttlExpirationService.keyExists(key);
+        return ResponseEntity.ok(Map.of(
+                "key", key,
+                "exists", exists,
+                "remainingTtlSeconds", remainingTtl != null ? remainingTtl : -1
+        ));
+    }
+
+    // =========================================================
+    // PATTERN 5: CACHE PENETRATION PROTECTION
+    // =========================================================
+
+    @GetMapping("/api/penetration/null-cache/users/{id}")
+    public ResponseEntity<User> getUserNullCache(@PathVariable Long id) {
+        log.info("[API] GET /penetration/null-cache/users/{}", id);
+        return cachePenetrationService.getUserWithNullCache(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/api/penetration/bloom/users/{id}")
+    public ResponseEntity<User> getUserBloomFilter(@PathVariable Long id) {
+        log.info("[API] GET /penetration/bloom/users/{}", id);
+        return cachePenetrationService.getUserWithBloomFilter(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/api/penetration/bloom/users")
+    public ResponseEntity<User> createUserBloomFilter(@RequestBody User user) {
+        log.info("[API] POST /penetration/bloom/users");
+        return ResponseEntity.ok(cachePenetrationService.createUserWithBloomFilter(user));
+    }
+
 
 }
